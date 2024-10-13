@@ -78,9 +78,6 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Prepare SQLx cache
-        run: cargo sqlx prepare --workspace -- --all-targets        
-
       - name: Check that queries are fresh
         run: cargo sqlx prepare --workspace --check -- --all-targets
 
@@ -115,6 +112,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
+      - name: Prepare SQLx cache
+        run: cargo sqlx prepare --workspace -- --all-targets
       - name: Linting
         run: cargo clippy -- -D warnings
 
