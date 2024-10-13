@@ -20,7 +20,7 @@ mod test {
         let body = response.into_body().try_into_bytes();
         match body {
             Ok(body) => assert!(body.is_empty()),
-            Err(e) => panic!("Failed to convert body into bytes: {:?}", e),
+            Err(_) => panic!("Failed to convert body into bytes"),
         }
     }
 }
