@@ -4,17 +4,22 @@ use reqwest::Client;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
 use zero2prod::{
-    configuration::{self, get_configuration, DatabaseSettings},
+    configuration::{self, DatabaseSettings},
     startup,
 };
 
+struct TestApp {
+    address: String,
+    db_pool: PgPool,
+}
+
 #[tokio::test]
 async fn health_check_works() {
-    let address = spawn_app().await;
+    let app = spawn_app().await;
 
     let client = Client::new();
     let response = client
-        .get(format!("{address}/health_check"))
+        .get(format!("{}/health_check", app.address))
         .send()
         .await
         .expect("Failed to execute request");
@@ -25,19 +30,13 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_from_data() {
-    let address = spawn_app().await;
-    let configuration = get_configuration().expect("Failed to read configuration.");
-    let connection_string = configuration.database.connection_string();
-
-    let mut connection = PgConnection::connect(&connection_string)
-        .await
-        .expect("Failed to connect to Postgres.");
+    let app = spawn_app().await;
 
     let client = Client::new();
 
     let test_case = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = client
-        .post(format!("{address}/subscriptions"))
+        .post(format!("{}/subscriptions", app.address))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(test_case)
         .send()
@@ -47,7 +46,7 @@ async fn subscribe_returns_a_200_for_valid_from_data() {
     assert_eq!(200, response.status());
 
     let saved = sqlx::query!("SELECT email, name FROM subscriptions")
-        .fetch_one(&mut connection)
+        .fetch_one(&app.db_pool)
         .await
         .expect("Failed to fetch saved subscription.");
     assert_eq!("ursula_le_guin@gmail.com", saved.email);
@@ -56,7 +55,7 @@ async fn subscribe_returns_a_200_for_valid_from_data() {
 
 #[tokio::test]
 async fn subscribe_returns_a_400_when_data_is_missing() {
-    let address = spawn_app().await;
+    let app = spawn_app().await;
     let client = Client::new();
 
     let test_cases = vec![
@@ -67,7 +66,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
 
     for (invalid_body, error_message) in test_cases {
         let response = client
-            .post(format!("{address}/subscriptions"))
+            .post(format!("{}/subscriptions", app.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(invalid_body)
             .send()
@@ -82,7 +81,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
     }
 }
 
-async fn spawn_app() -> String {
+async fn spawn_app() -> TestApp {
     let mut configuration =
         configuration::get_configuration().expect("Failed to read configuration.");
     configuration.database.database_name = Uuid::new_v4().to_string();
@@ -90,9 +89,12 @@ async fn spawn_app() -> String {
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address.");
     let port = listener.local_addr().unwrap().port();
-    let server = startup::run(listener, connection_pool).expect("Failed to bind address.");
+    let server = startup::run(listener, connection_pool.clone()).expect("Failed to bind address.");
     tokio::spawn(server);
-    format!("http://127.0.0.1:{port}")
+    TestApp {
+        address: format!("http://127.0.0.1:{port}"),
+        db_pool: connection_pool,
+    }
 }
 
 async fn configure_database(config: &DatabaseSettings) -> PgPool {
