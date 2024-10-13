@@ -1,12 +1,16 @@
 use std::net::TcpListener;
 
 use reqwest::Client;
-use sqlx::{Connection, PgConnection};
-use zero2prod::configuration::get_configuration;
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use uuid::Uuid;
+use zero2prod::{
+    configuration::{self, get_configuration, DatabaseSettings},
+    startup,
+};
 
 #[tokio::test]
 async fn health_check_works() {
-    let address = spawn_app();
+    let address = spawn_app().await;
 
     let client = Client::new();
     let response = client
@@ -21,7 +25,7 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_from_data() {
-    let address = spawn_app();
+    let address = spawn_app().await;
     let configuration = get_configuration().expect("Failed to read configuration.");
     let connection_string = configuration.database.connection_string();
 
@@ -52,7 +56,7 @@ async fn subscribe_returns_a_200_for_valid_from_data() {
 
 #[tokio::test]
 async fn subscribe_returns_a_400_when_data_is_missing() {
-    let address = spawn_app();
+    let address = spawn_app().await;
     let client = Client::new();
 
     let test_cases = vec![
@@ -78,10 +82,42 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
     }
 }
 
-fn spawn_app() -> String {
+async fn spawn_app() -> String {
+    let mut configuration =
+        configuration::get_configuration().expect("Failed to read configuration.");
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    let connection_pool = configure_database(&configuration.database).await;
+
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind address.");
     let port = listener.local_addr().unwrap().port();
-    let server = zero2prod::startup::run(listener).expect("Failed to bind address.");
+    let server = startup::run(listener, connection_pool).expect("Failed to bind address.");
     tokio::spawn(server);
     format!("http://127.0.0.1:{port}")
+}
+
+async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    let maintenance_setting = DatabaseSettings {
+        database_name: "postgres".to_string(),
+        username: "postgres".to_string(),
+        password: "password".to_string(),
+        ..config.clone()
+    };
+    let mut connection = PgConnection::connect(&maintenance_setting.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
+    let create_query = format!(r#"CREATE DATABASE "{}";"#, config.database_name);
+    println!("query: {create_query}");
+    connection
+        .execute(create_query.as_str())
+        .await
+        .expect("Failed to create database.");
+
+    let connection_pool = PgPool::connect(&config.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Failed to migrate the database.");
+    connection_pool
 }
