@@ -1,4 +1,4 @@
-use std::net::TcpListener;
+use std::{net::TcpListener, sync::LazyLock};
 
 use reqwest::Client;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
@@ -6,7 +6,13 @@ use uuid::Uuid;
 use zero2prod::{
     configuration::{self, DatabaseSettings},
     startup,
+    telemetry::{get_subscriber, init_subscriber},
 };
+
+static TRACING: LazyLock<()> = LazyLock::new(|| {
+    let subscriber = get_subscriber("test".into(), "debug".into());
+    init_subscriber(subscriber);
+});
 
 struct TestApp {
     address: String,
@@ -82,6 +88,8 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
 }
 
 async fn spawn_app() -> TestApp {
+    LazyLock::force(&TRACING);
+
     let mut configuration =
         configuration::get_configuration().expect("Failed to read configuration.");
     configuration.database.database_name = Uuid::new_v4().to_string();
