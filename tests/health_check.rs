@@ -1,6 +1,7 @@
 use std::{net::TcpListener, sync::LazyLock};
 
 use reqwest::Client;
+use secrecy::ExposeSecret;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
 use zero2prod::{
@@ -116,12 +117,13 @@ async fn configure_database(config: &DatabaseSettings) -> PgPool {
     let maintenance_setting = DatabaseSettings {
         database_name: "postgres".to_string(),
         username: "postgres".to_string(),
-        password: "password".to_string(),
+        password: "password".to_string().into(),
         ..config.clone()
     };
-    let mut connection = PgConnection::connect(&maintenance_setting.connection_string())
-        .await
-        .expect("Failed to connect to Postgres.");
+    let mut connection =
+        PgConnection::connect(&maintenance_setting.connection_string().expose_secret())
+            .await
+            .expect("Failed to connect to Postgres.");
     let create_query = format!(r#"CREATE DATABASE "{}";"#, config.database_name);
 
     connection
@@ -129,7 +131,7 @@ async fn configure_database(config: &DatabaseSettings) -> PgPool {
         .await
         .expect("Failed to create database.");
 
-    let connection_pool = PgPool::connect(&config.connection_string())
+    let connection_pool = PgPool::connect(&config.connection_string().expose_secret())
         .await
         .expect("Failed to connect to Postgres.");
     sqlx::migrate!("./migrations")
